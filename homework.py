@@ -4,13 +4,15 @@ import sys
 import time
 from http import HTTPStatus
 from logging import StreamHandler
-from typing import Any, Dict, List
+from typing import Dict, List, Union
 
 import requests
 import telegram
 from dotenv import load_dotenv
 
-import exceptions
+from CustomErrors import WrongStatusError
+
+# Делала эти импорты через isort, он всегда их так расставляет
 
 load_dotenv()
 
@@ -18,7 +20,7 @@ PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-RETRY_PERIOD = 600
+RETRY_PERIOD = 600  # 10 * 60
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
@@ -37,49 +39,72 @@ handler.setFormatter(formatter)
 
 
 def check_tokens() -> bool:
-    """Проверка наличия переменных окружения."""
-    for token in PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID:
-        if token is None:
-            logger.critical('Отсутствуют обязательные переменные окружения')
-            return False
-    logger.info('Все переменные получены')
+    """
+    Проверяет, что токены получены.
+    Райзит исключение при потере какого-либо токена.
+    """
+    for token in 'PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID':
+        if (
+            token not in [name for name in globals()]
+            or globals()[token] is None
+        ):
+            logger.critical(
+                'Отсутствует обязательная переменная окружения - %s', token,
+            )
+            raise KeyError(
+                'Заданы не все переменные окружения',
+            )
+    logger.info('Переменные окружения получены')
     return True
 
 
-def send_message(bot: telegram.Bot, message: str) -> None:
-    """Отправка сообщения."""
+def send_message(bot: telegram.Bot, text: str) -> None:
+    """Бот отправляет текст сообщения в телеграм."""
     try:
         bot.send_message(
             TELEGRAM_CHAT_ID,
-            text=message,
+            text=text,
         )
-    except Exception as error:
-        logger.error(f'Cбой при отправке сообщения в Telegram, {error}')
+    except Exception:
+        logger.exception(
+            'Cбой при отправке сообщения в Telegram, %s', Exception,
+        )
     logging.debug('Сообщение отправлено')
 
 
-def get_api_answer(timestamp: int) -> Dict[Any, Any]:
-    """Доступность API."""
-    payload = {'from_date': timestamp}
+def get_api_answer(timestamp: int) -> Dict[str, Union[List[Dict], int]]:
+    """
+    Получает ответ от API.
+    Райзит исключение при недоступности эндпоинта
+    или других сбоях при запросе к нему.
+    """
     try:
-        response = requests.get(url=ENDPOINT, headers=HEADERS, params=payload)
-        if response.status_code != HTTPStatus.OK:
-            logger.error(
-                f'Эндпоинт недоступен. Код ошибки: {response.status_code}'
-            )
-            response.raise_for_status()
+        response = requests.get(
+            url=ENDPOINT, headers=HEADERS, params={'from_date': timestamp},
+        )
         logger.info('Ответ от API получен')
     except requests.RequestException() as error:
-        logger.error(f'Сбой при запросе к эндпоинту: {error}')
+        logger.exception('Сбой при запросе к эндпоинту: %s', error)
         raise requests.RequestException(
-            'Проверьте правильный ли ответ приходит от API'
+            'Проверьте правильный ли ответ приходит от API',
         )
+    if response.status_code != HTTPStatus.OK:
+        logger.error(
+            'Эндпоинт недоступен. Код ошибки: %s',
+            response.status_code,
+        )
+        response.raise_for_status()
 
     return response.json()
 
 
-def check_response(response: Dict[Any, Any]) -> List[Any]:
-    """Проверяем ответ API."""
+def check_response(response: Dict[str, Union[List[Dict], int]]) -> List[Dict]:
+    """
+    Проверяет, соответствует ли тип входных данных ожидаемому,
+    проверяет наличие всех ожидаемых ключей в ответе.
+    Райзит TypeError при несоответствии типа данных,
+    KeyError - при отсутствии ожидаемого ключа.
+    """
     if isinstance(response, dict):
         if 'current_date' in response and 'homeworks' in response:
             logger.info('Все ключи получены')
@@ -87,26 +112,28 @@ def check_response(response: Dict[Any, Any]) -> List[Any]:
                 return response.get('homeworks')
             raise TypeError(' homeworks должен быть списком')
         logger.error('Необходимый ключ отсутсвует в ответе')
-        raise exceptions.MissingKeyError('Ключ "homeworks" отсутствует')
+        raise KeyError('Ключ "homeworks" отсутствует')
     raise TypeError(' Структура данных не соответствует ожиданиям')
 
 
-def parse_status(homework: Dict[Any, Any]) -> str:
+def parse_status(homework: Dict[str, Union[int, str]]) -> str:
     """Проверка информации о домашней работе."""
     if homework.get('status') in HOMEWORK_VERDICTS:
         verdict = HOMEWORK_VERDICTS.get(homework.get('status'))
         logger.info('Статус домашней работы обнаружен')
         if 'homework_name' in homework:
             homework_name = homework.get('homework_name')
-            return (f'Изменился статус проверки работы "{homework_name}". '
-                    f'{verdict}')
-        raise exceptions.MissingKeyError('Ключ "homework_name" отсутствует')
+            return (
+                f'Изменился статус проверки работы "{homework_name}". '
+                f'{verdict}'
+            )
+        raise KeyError('Ключ "homework_name" отсутствует')
     elif homework.get('status') is None:
         logger.debug('Отсутствуют новые статусы домашки')
-        raise exceptions.WrongStatusError('Статус None')
+        raise WrongStatusError('Статус None')
     else:
         logger.error('Неожиданный статус домашней работы')
-        raise exceptions.WrongStatusError('Статус не документирован')
+        raise WrongStatusError('Статус не документирован')
 
 
 def main() -> None:
@@ -120,7 +147,8 @@ def main() -> None:
                 homeworks = check_response(response)
                 if len(homeworks) > 0:
                     send_message(
-                        bot, parse_status(response.get('homeworks')[0])
+                        bot,
+                        parse_status(response.get('homeworks')[0]),
                     )
                     timestamp = response['current_date']
                 time.sleep(RETRY_PERIOD)

@@ -117,7 +117,12 @@ def check_response(response: Dict[str, Union[List[Dict], int]]) -> List[Dict]:
 
 
 def parse_status(homework: Dict[str, Union[int, str]]) -> str:
-    """Проверка информации о домашней работе."""
+    """
+    Проверяет статус домашней работы. При наличии возвращает сообщение
+    для отправки в Telegram.
+    При отсутствии статуса или получении недокументированного статуса
+    райзит исключение.
+    """
     if homework.get('status') in HOMEWORK_VERDICTS:
         verdict = HOMEWORK_VERDICTS.get(homework.get('status'))
         logger.info('Статус домашней работы обнаружен')

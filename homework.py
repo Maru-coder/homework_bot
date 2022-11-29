@@ -130,6 +130,7 @@ def check_response(response: Dict[str, Union[List[Dict], int]]) -> List[Dict]:
 def parse_status(homework: Dict[str, Union[int, str]]) -> str:
     """
     Проверяет статус домашней работы.
+
     При наличии возвращает сообщение для отправки в Telegram.
     При отсутствии статуса или получении недокументированного статуса
     райзит исключение.

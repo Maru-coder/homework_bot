@@ -1,8 +1,8 @@
 import logging
 import os
 import sys
+import time
 from http import HTTPStatus
-from time import sleep, time
 from typing import Dict, List, Union
 
 import requests
@@ -68,7 +68,7 @@ def send_message(bot: telegram.Bot, text: str) -> None:
         )
     except telegram.error.TelegramError:
         logging.exception('Cбой при отправке сообщения в Telegram')
-    logging.info('Сообщение о статусе домашки отправлено')
+    logging.debug('Сообщение о статусе домашки отправлено')
 
 
 def get_api_answer(
@@ -150,7 +150,7 @@ def main() -> None:
     """Основная логика работы бота."""
     check_tokens()
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    timestamp = int(time())
+    timestamp = int(time.time())
     error_message = ''
     while True:
         try:
@@ -163,14 +163,14 @@ def main() -> None:
                 )
                 timestamp = response['current_date']
             logging.info('Спящий режим')
-            sleep(RETRY_PERIOD)
+            time.sleep(RETRY_PERIOD)
         except Exception as error:
             if error != error_message:
                 message = f'Сбой в работе программы: {error}'
                 send_message(bot, message)
                 error_message = error
                 logging.info('Спящий режим')
-                sleep(RETRY_PERIOD)
+                time.sleep(RETRY_PERIOD)
 
 
 if __name__ == '__main__':

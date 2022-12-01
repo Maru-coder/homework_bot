@@ -1,2 +1,0 @@
-class WrongStatusError(Exception):
-    pass

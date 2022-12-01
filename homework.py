@@ -1,7 +1,6 @@
 import logging
 import os
 import sys
-import time
 from http import HTTPStatus
 from time import sleep, time
 from typing import Dict, List, Union

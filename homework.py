@@ -9,6 +9,8 @@ import requests
 import telegram
 from dotenv import load_dotenv
 
+from exceptions import CantSendMessageError, NoHomeworkDetectedError
+
 load_dotenv()
 
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
@@ -41,7 +43,7 @@ def check_tokens() -> None:
     missing_tokens = [
         token
         for token in ('PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID')
-        if token not in globals() or globals()[token] is None
+        if token not in globals() or globals().get(token) is None
     ]
     if missing_tokens:
         logging.critical(
@@ -59,7 +61,8 @@ def send_message(bot: telegram.Bot, text: str) -> None:
     """Бот отправляет текст сообщения в телеграм.
 
     При неудачной попытке отправки сообщения логируется исключение
-    TelegramError.
+    TelegramError и выбрасывается исключение об невозможности
+    отправить сообщение в Telegram.
     """
     try:
         bot.send_message(
@@ -68,6 +71,7 @@ def send_message(bot: telegram.Bot, text: str) -> None:
         )
     except telegram.error.TelegramError:
         logging.exception('Cбой при отправке сообщения в Telegram')
+        raise CantSendMessageError('Невозможно отправить сообщение в Telegram')
     logging.debug('Сообщение о статусе домашки отправлено')
 
 
@@ -85,8 +89,8 @@ def get_api_answer(
             headers=HEADERS,
             params={'from_date': timestamp},
         )
-    except requests.exceptions.RequestException as error:
-        logging.exception('Сбой при запросе к эндпоинту: %s', error)
+    except requests.exceptions.RequestException:
+        logging.exception('Сбой при запросе к эндпоинту')
         raise requests.exceptions.RequestException(
             'Ошибка при запросе к API: %s',
             response.status_code,
@@ -130,20 +134,16 @@ def parse_status(homework: Dict[str, Union[int, str]]) -> str:
     райзит исключение.
     """
     try:
-        status = homework['status']
-        name = homework['homework_name']
-        logging.info('Ключи "status" и "homework_name" получены')
+        name, status = homework['homework_name'], homework['status']
     except KeyError:
         logging.error('Один или оба ключа отсутствуют')
-        raise KeyError('Необходимых значений нет')
+        raise NoHomeworkDetectedError('Домашней работы нет')
     try:
-        verdict = HOMEWORK_VERDICTS[status]
-        logging.info('Статус домашней работы обнаружен')
+        return (f'Изменился статус проверки работы "{name}". '
+                f'{HOMEWORK_VERDICTS[status]}')
     except KeyError:
         logging.error('Неожиданный статус домашней работы')
         raise KeyError('Статуса %s нет в словаре', status)
-
-    return f'Изменился статус проверки работы "{name}". {verdict}'
 
 
 def main() -> None:
@@ -161,16 +161,15 @@ def main() -> None:
                     bot,
                     parse_status(response.get('homeworks')[0]),
                 )
-                timestamp = response['current_date']
-            logging.info('Спящий режим')
-            time.sleep(RETRY_PERIOD)
+            timestamp = response['current_date']
         except Exception as error:
             if error != error_message:
                 message = f'Сбой в работе программы: {error}'
                 send_message(bot, message)
                 error_message = error
-                logging.info('Спящий режим')
-                time.sleep(RETRY_PERIOD)
+        finally:
+            logging.info('Спящий режим')
+            time.sleep(RETRY_PERIOD)
 
 
 if __name__ == '__main__':
